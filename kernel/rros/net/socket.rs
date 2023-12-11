@@ -7,6 +7,7 @@
  */
 use crate::bindings::{iovec, sockaddr};
 use crate::clock::RROS_MONO_CLOCK;
+use crate::poll::RrosPollHead;
 use crate::timeout::RrosTmode;
 use crate::THIS_MODULE;
 use crate::{bindings, c_types};
@@ -94,10 +95,6 @@ pub trait RrosNetProto {
     ) -> isize;
     // fn oob_poll(&mut self, wait:&oob_poll_wait) -> __poll_t;
     fn get_netif(&self, sock: &mut RrosSocket) -> Option<NetDevice>;
-}
-pub struct RrosPollHead {
-    pub watchpoints: ListHead,
-    pub lock: RawSpinLock,
 }
 pub struct Binding {
     pub real_ifindex: i32,
