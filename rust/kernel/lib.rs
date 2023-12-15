@@ -95,6 +95,7 @@ pub mod interrupt;
 pub mod irq_pipeline;
 pub mod irq_work;
 pub mod irqstage;
+pub mod kernelh;
 pub mod ktime;
 pub mod memory_rros;
 pub mod memory_rros_test;

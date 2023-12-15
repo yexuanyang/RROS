@@ -12,7 +12,8 @@ use crate::{
 };
 
 use kernel::{
-    c_types, prelude::*, spinlock_init, str::CStr, sync::SpinLock, user_ptr, Error, device::DeviceType,
+    c_types, device::DeviceType, prelude::*, spinlock_init, str::CStr, sync::SpinLock, user_ptr,
+    Error,
 };
 
 use kernel::file::File;

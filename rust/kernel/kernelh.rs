@@ -19,8 +19,13 @@ pub fn _kasprintf_1(gfp: bindings::gfp_t, fmt: *const c_char, arg1: *const c_cha
 
 /// The `printk` function is a wrapper around the `printk` function from the kernel.
 #[inline]
-pub fn _kasprintf_2(gfp: bindings::gfp_t, fmt: *const c_char, arg1: *const c_char,arg2: *const c_char) -> *mut c_char {
-    unsafe { bindings::kasprintf(gfp, fmt, arg1,arg2) }
+pub fn _kasprintf_2(
+    gfp: bindings::gfp_t,
+    fmt: *const c_char,
+    arg1: *const c_char,
+    arg2: *const c_char,
+) -> *mut c_char {
+    unsafe { bindings::kasprintf(gfp, fmt, arg1, arg2) }
 }
 
 /// A wrapper to store thread's exit code.

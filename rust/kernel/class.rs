@@ -6,7 +6,7 @@
 
 use core::u32;
 
-use crate::{bindings, c_types, error::Error, Result, device};
+use crate::{bindings, c_types, device, error::Error, Result};
 
 extern "C" {
     #[allow(improper_ctypes)]
