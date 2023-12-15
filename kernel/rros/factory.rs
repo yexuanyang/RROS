@@ -1,5 +1,10 @@
-use core::{cell::RefCell, clone::Clone, convert::TryInto, default::Default, result::Result::Ok, ptr};
-use crate::{clock, control, file::RrosFileBinding, proxy, thread, xbuf};
+use core::{
+    cell::RefCell, clone::Clone, convert::TryInto, default::Default, ptr::null_mut,
+    result::Result::Ok,
+};
+
+use crate::{control, poll};
+use crate::{clock, file::RrosFileBinding, proxy, thread, xbuf};
 use alloc::rc::Rc;
 use kernel::file::fd_install;
 use kernel::uidgid::{KgidT, KuidT};
@@ -20,6 +25,7 @@ use kernel::{
     types::{self, hash_init},
     uidgid, workqueue, ThisModule,
     file_operations::{FileOpener, IoctlCommand},
+    kernelh,
 };
 use kernel::{device::DeviceType, io_buffer::IoBufferWriter};
 
@@ -295,17 +301,13 @@ impl device::Devnode for FactoryTypeDevnode {
         if let Some(e) = element {
             let inside = unsafe { (*(e.factory.locked_data().get())).inside.as_ref().unwrap() };
             if let Some(uid) = uid {
-                unsafe {
-                    if let Some(e_uid) = inside.kuid.as_ref() {
-                        *uid = *e_uid;
-                    }
+                if let Some(e_uid) = inside.kuid.as_ref() {
+                    *uid = *e_uid;
                 }
             }
             if let Some(gid) = gid {
-                unsafe {
-                    if let Some(e_gid) = inside.kgid.as_ref() {
-                        *gid = *e_gid;
-                    }
+                if let Some(e_gid) = inside.kgid.as_ref() {
+                    *gid = *e_gid;
                 }
             }
         }
@@ -515,7 +517,7 @@ fn do_element_visibility(
     let filp = File::anon_inode_getfile(
         e_mut.devname.as_mut().unwrap().get_name(),
         ops,
-        ptr::null_mut(),
+        null_mut(),
         bindings::O_RDWR as i32,
     );
 
@@ -1002,7 +1004,7 @@ fn rros_create_factory(
                 }
             }
             let rdev = chrdev_reg.as_mut().last_registered_devt().unwrap();
-            let dev = create_sys_device(rdev, inside, ptr::null_mut() as *mut u8, idevname);
+            let dev = create_sys_device(rdev, inside, null_mut() as *mut u8, idevname);
             inside.device = Some(dev);
 
             let mut index = RrosIndex {
@@ -1139,13 +1141,14 @@ pub fn rros_early_init_factories(
     this_module: &'static ThisModule,
 ) -> Result<Pin<Box<chrdev::Registration<NR_FACTORIES>>>> {
     // TODO: move the number of factories to a variable
-    let mut early_factories: [&mut SpinLock<RrosFactory>; 5] = unsafe {
+    let mut early_factories: [&mut SpinLock<RrosFactory>; 6] = unsafe {
         [
             &mut clock::RROS_CLOCK_FACTORY,
             &mut thread::RROS_THREAD_FACTORY,
             &mut xbuf::RROS_XBUF_FACTORY,
             &mut proxy::RROS_PROXY_FACTORY,
             &mut control::RROS_CONTROL_FACTORY,
+            &mut poll::RROS_POLL_FACTORY,
         ]
     };
     // static struct rros_factory *early_factories[] = {
@@ -1171,15 +1174,9 @@ pub fn rros_early_init_factories(
         this_module,
         CStr::from_bytes_with_nul("rros\0".as_bytes())?.as_char_ptr(),
     )?)?;
-    // TODO: 创建一个结构体，实现rros_devnode
-    unsafe {
-        Arc::get_mut(&mut rros_class)
-            .unwrap()
-            .set_devnode::<RrosDevnode>();
-    }
-    // unsafe {
-    //     (*rros_class.ptr).devnode = Option::Some(rros_devnode);
-    // }
+    Arc::get_mut(&mut rros_class)
+        .unwrap()
+        .set_devnode::<RrosDevnode>();
     let mut chrdev_reg: Pin<Box<chrdev::Registration<NR_FACTORIES>>> =
         chrdev::Registration::new_pinned(c_str!("rros_factory"), 0, this_module)?;
     chrdev_reg.as_mut().register::<RRosRustFile>()?;

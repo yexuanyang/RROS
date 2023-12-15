@@ -13,7 +13,7 @@ use crate::{
     lock::{raw_spin_lock_init, raw_spin_lock_irqsave, raw_spin_unlock_irqrestore},
     poll::RrosPollHead,
     sched::rros_schedule,
-    thread::{atomic_read, atomic_set, rros_init_user_element},
+    thread::rros_init_user_element,
     work::*,
 };
 
@@ -919,7 +919,7 @@ fn proxy_factory_build(
 
 pub static mut RROS_PROXY_FACTORY: SpinLock<RrosFactory> = unsafe {
     SpinLock::new(RrosFactory {
-        name: unsafe { CStr::from_bytes_with_nul_unchecked("proxy\0".as_bytes()) },
+        name: CStr::from_bytes_with_nul_unchecked("proxy\0".as_bytes()),
         // fops: Some(&RustFileProxy),
         nrdev: CONFIG_RROS_NR_PROXIES,
         build: Some(proxy_factory_build),

@@ -71,6 +71,7 @@ impl File {
         self.ptr
     }
 
+    /// Returns the parent directory name of the file 
     pub fn get_parent_name(&self) -> Result<&str> {
         let d = unsafe { (*(*self.ptr).f_path.dentry).d_parent };
         if d.is_null() {
@@ -84,6 +85,7 @@ impl File {
         }
     }
 
+    /// Returns the file's name
     pub fn get_name(&self) -> Result<&str> {
         unsafe {
             match CStr::from_char_ptr(

@@ -65,6 +65,12 @@ impl PollTable {
         }
     }
 }
+
+/// Wraps the kernel's `struct oob_poll_wait`.
+///
+/// # Invariants
+///
+/// The pointer `OobPollWait::ptr` is null or valid.
 pub struct OobPollWait {
     pub ptr: *mut bindings::oob_poll_wait,
 }
@@ -827,6 +833,7 @@ pub trait FileOperations: Send + Sync + Sized {
     ) -> Result<i32> {
         Err(Error::EINVAL)
     }
+
     /// Performs 32-bit IO control operations on that are specific to the file on 64-bit kernels.
     ///
     /// Corresponds to the `compat_ioctl` function pointer in `struct file_operations`.
@@ -838,6 +845,9 @@ pub trait FileOperations: Send + Sync + Sized {
         Err(Error::EINVAL)
     }
 
+    /// Performs 32-bit IO control operations on that are specific to the file on 64-bit kernels.
+    ///
+    /// Corresponds to the `compat_oob_ioctl` function pointer in `struct file_operations`.
     fn compat_oob_ioctl(
         _this: &<<Self::Wrapper as PointerWrapper>::Borrowed as Deref>::Target,
         _file: &File,

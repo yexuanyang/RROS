@@ -76,19 +76,10 @@ impl RrosFlag {
 
     #[inline]
     pub fn raise_nosched(&mut self) {
-        let flags = unsafe {
-            rust_helper_raw_spin_lock_irqsave(
-                &mut self.wait.lock as *const _ as *mut bindings::hard_spinlock_t,
-            )
-        };
+        let flags = self.wait.lock.raw_spin_lock_irqsave();
         self.raised.set(true);
         self.wait.flush_locked(0);
-        unsafe {
-            rust_helper_raw_spin_unlock_irqrestore(
-                &mut self.wait.lock as *const _ as *mut bindings::hard_spinlock_t,
-                flags,
-            )
-        };
+        self.wait.lock.raw_spin_unlock_irqrestore(flags);
     }
 
     #[inline]
@@ -110,7 +101,7 @@ impl RrosFlag {
 
     #[inline]
     pub fn flush_nosched(&mut self, reason: i32) {
-        let mut flags: u64;
+        let flags: u64;
         flags = raw_spin_lock_irqsave();
         self.wait.flush_locked(reason);
         raw_spin_unlock_irqrestore(flags);

@@ -14,6 +14,7 @@ use core::convert::From;
 use core::fmt;
 use core::num::TryFromIntError;
 use core::str::{self, Utf8Error};
+use core::cell::BorrowMutError;
 
 /// Generic integer kernel error.
 ///
@@ -195,6 +196,12 @@ impl From<AllocError> for Error {
 impl From<LayoutError> for Error {
     fn from(_: LayoutError) -> Error {
         Error::ENOMEM
+    }
+}
+
+impl From<BorrowMutError> for Error {
+    fn from(_: BorrowMutError) -> Error {
+        Error::EBUSY
     }
 }
 

@@ -12,7 +12,7 @@ use crate::timeout::RrosTmode;
 use crate::THIS_MODULE;
 use crate::{bindings, c_types};
 use crate::{
-    crossing::RrosCrossing, file::RrosFile, list::ListHead, sched::SsizeT,
+    crossing::RrosCrossing, file::RrosFile,
     wait::RrosWaitQueue,
 };
 use crate::lock::raw_spin_lock_init;

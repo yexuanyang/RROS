@@ -1,4 +1,3 @@
-use crate::flags::RrosFlag;
 use crate::poll::RrosPollWatchpoint;
 use crate::wait::{RrosWaitChannel, RrosWaitQueue, RROS_WAIT_PRIO};
 use crate::{idle, sched, tp};

@@ -29,6 +29,7 @@ use kernel::{
     sync::SpinLock,
     user_ptr::{UserSlicePtrReader, UserSlicePtrWriter},
     vmalloc::c_kzalloc,
+    waitqueue, fs,
 };
 
 #[derive(Default)]
@@ -862,7 +863,7 @@ fn xbuf_oob_poll(filp: &File, wait: *mut bindings::oob_poll_wait) -> Result<u32>
     let xbuf: &mut RrosXbuf = unsafe { &mut *((*((*fbind).element)).pointer as *mut RrosXbuf) };
     let obnd = &xbuf.obnd;
     let ibnd = &xbuf.ibnd;
-    let mut flags: u32 = 0;
+    let mut flags: u32;
     let mut ready: u32 = 0;
     let rwait = unsafe { &mut *(wait as *mut OobPollWait) };
 
@@ -1040,7 +1041,7 @@ fn xbuf_factory_build(
 
 pub static mut RROS_XBUF_FACTORY: SpinLock<RrosFactory> = unsafe {
     SpinLock::new(RrosFactory {
-        name: unsafe { CStr::from_bytes_with_nul_unchecked("xbuf\0".as_bytes()) },
+        name: CStr::from_bytes_with_nul_unchecked("xbuf\0".as_bytes()),
         // fops: Some(RustFileXbuf),
         nrdev: CONFIG_RROS_NR_XBUFS,
         build: Some(xbuf_factory_build),
