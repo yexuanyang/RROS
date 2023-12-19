@@ -69,7 +69,7 @@ pub const RROS_POLIOC_WAIT: u32 = kernel::ioctl::_IOWR::<(i64, i64, i64)>(RROS_P
 pub struct RrosPollGroup {
     pub item_index: rbtree::RBTree<u32, Arc<RrosPollItem>>,
     pub item_list: List<Arc<RrosPollItem>>,
-    pub waiter_list: SpinLock<list_head>,
+    pub waiter_list: SpinLock<List<Arc<RrosPollWaiter>>>,
     pub rfile: RrosFile,
     // pub item_lock: mutex::RrosKMutex,
     pub nr_items: i32,
@@ -81,7 +81,7 @@ impl RrosPollGroup {
         Self {
             item_index: rbtree::RBTree::new(),
             item_list: List::new(),
-            waiter_list: unsafe { SpinLock::new(list_head::default()) },
+            waiter_list: unsafe { SpinLock::new(List::new()) },
             rfile: RrosFile::new(),
             // item_lock: mutex::RrosKMutex::new(),
             nr_items: 0,
@@ -92,7 +92,6 @@ impl RrosPollGroup {
     pub fn init(&mut self) {
         let pinned = unsafe { Pin::new_unchecked(&mut self.waiter_list) };
         spinlock_init!(pinned, "RrosPollGroup::waiter_list");
-        init_list_head!(self.waiter_list.locked_data().get());
         //FIXME: init kmutex fail
         // rros_init_kmutex(&mut item_lock as *mut RrosKMutex);
     }
@@ -138,14 +137,21 @@ impl RrosPollItem {
 }
 pub struct RrosPollWaiter {
     pub flag: Option<Rc<RefCell<RrosFlag>>>,
-    pub next: list_head,
+    pub next: Links<RrosPollWaiter>,
+}
+
+impl GetLinks for RrosPollWaiter {
+    type EntryType = RrosPollWaiter;
+    fn get_links(data: &Self::EntryType) -> &Links<Self::EntryType> {
+        &data.next
+    }
 }
 
 impl RrosPollWaiter {
     pub fn new() -> Self {
         Self {
             flag: Some(Rc::try_new(RefCell::new(RrosFlag::new())).unwrap()),
-            next: list_head::default(),
+            next: Links::new(),
         }
     }
 }
@@ -900,12 +906,14 @@ fn wait_events(
                 tmode = RrosTmode::RrosRel;
             }
 
+            let waiter_list = unsafe{ &mut *group.waiter_list.locked_data().get() };
+            let arc_waiter = Arc::try_new(waiter).unwrap();
             flags = group.waiter_list.irq_lock_noguard();
-            list_add!(&mut waiter.next, group.waiter_list.locked_data().get());
+            waiter_list.push_front(arc_waiter.clone());
             group.waiter_list.irq_unlock_noguard(flags);
             let num = waiter_flag_mut.wait_timeout(timeout, tmode);
             flags = group.waiter_list.irq_lock_noguard();
-            list_del!(&mut waiter.next);
+            unsafe{ waiter_list.remove(&arc_waiter) };
             group.waiter_list.irq_unlock_noguard(flags);
 
             if num == 0 {
@@ -946,20 +954,12 @@ fn poll_release(obj: Box<RefCell<RrosPollGroup>>, _filp: &File) {
     let flags: u64;
     let refmut_g = group.deref_mut();
     flags = refmut_g.waiter_list.irq_lock_noguard();
-    list_for_each_entry!(
-        waiter,
-        &*(refmut_g.waiter_list.locked_data().get() as *mut list_head),
-        RrosPollWaiter,
-        {
-            unsafe {
-                Rc::get_mut((*waiter).flag.as_mut().unwrap())
-                    .unwrap()
-                    .get_mut()
-                    .flush_nosched(T_RMID as i32);
-            }
-        },
-        next
-    );
+    let mut cursor = unsafe{ (*refmut_g.waiter_list.locked_data().get()).cursor_front_mut() };
+    while cursor.current().is_some() {
+        let waiter = cursor.current().unwrap();
+        waiter.flag.as_deref().unwrap().try_borrow_mut().unwrap().flush_nosched(T_RMID as i32);
+        cursor.move_next();
+    }
     refmut_g.waiter_list.irq_unlock_noguard(flags);
     unsafe {
         rros_schedule();
