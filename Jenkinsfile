@@ -1,7 +1,5 @@
 pipeline {
-    agent {
-	docker { image 'ubuntu:22.04' }
-    }
+    agent { dockerfile true }
     stages {
         stage('Build') {
             steps {
@@ -9,7 +7,7 @@ pipeline {
                 sh '''
                     echo "Multiline shell steps works too"
                     ls -lah
-		    uname -ra
+                    docker run -it 
                 '''
             }
         }
