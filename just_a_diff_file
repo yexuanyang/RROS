@@ -8,3 +8,4 @@ last 5 test had already proved jenkins works normally, this test proves without 
 it seems to be broken. test one more time
 test one more time
 修改webhook再测试一次
+修改jenkins_token权限再试一次
