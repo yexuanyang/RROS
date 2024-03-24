@@ -1,3 +1,4 @@
 this file will make webhook work and build image 
 last make fail, this time should work
 rustup not config last time, this time should work!
+last time build image successfully! this time we will scp the images to panda server! and this time output will not print into log
