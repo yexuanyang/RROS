@@ -7,3 +7,4 @@ redirection is successful, but scp fail. this time scp should work!
 last 5 test had already proved jenkins works normally, this test proves without plugin Github Pull Request Builder and Publish Over SSH it can also work.
 it seems to be broken. test one more time
 test one more time
+修改webhook再测试一次
