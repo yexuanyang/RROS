@@ -12,3 +12,5 @@ test one more time
 提示github enterprise private mode enable
 这次应该成了
 再次确认是成了
+
+修改Jenkinsfile之后，触发PR，这次build应该可以成功从jenkins提交任务
