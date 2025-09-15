@@ -1,0 +1,19 @@
+# Makefile for RROS restore thread test program
+
+CC = gcc
+CFLAGS = -Wall -Wextra -std=c99
+TARGET = test_rros_restore_thread
+SOURCE = test_rros_restore_thread.c
+
+all: $(TARGET)
+
+$(TARGET): $(SOURCE)
+	$(CC) $(CFLAGS) -o $(TARGET) $(SOURCE)
+
+clean:
+	rm -f $(TARGET)
+
+install: $(TARGET)
+	sudo ./$(TARGET)
+
+.PHONY: all clean install
