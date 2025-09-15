@@ -6,12 +6,23 @@
  * Copyright (C) Huawei Futurewei Technologies.
  */
 
+#include "asm/io.h"
+#include "asm/processor.h"
+#include "linux/crash_dump.h"
+#include "linux/gfp.h"
+#include "linux/io.h"
+#include "linux/sched.h"
+#include "linux/slab.h"
+#include "linux/types.h"
 #include <linux/interrupt.h>
 #include <linux/irq.h>
 #include <linux/kernel.h>
 #include <linux/kexec.h>
 #include <linux/page-flags.h>
 #include <linux/smp.h>
+#include <linux/syscalls.h>
+#include <linux/capability.h>
+#include <linux/errno.h>
 
 #include <asm/cacheflush.h>
 #include <asm/cpu_ops.h>
@@ -26,6 +37,8 @@
 /* Global variables for the arm64_relocate_new_kernel routine. */
 extern const unsigned char arm64_relocate_new_kernel[];
 extern const unsigned long arm64_relocate_new_kernel_size;
+bool is_crash_kernel;
+void* migration_threads;
 
 /**
  * kexec_image_info - For debugging output.
@@ -196,6 +209,115 @@ void machine_kexec(struct kimage *kimage)
 			 kimage->arch.dtb_mem);
 
 	BUG(); /* Should never get here. */
+}
+
+/**
+ * sys_rros_restore_thread - Restore thread state from DTS reserved memory
+ * 
+ * This system call restores critical thread data (migration_threads pointer,
+ * stack, and CPU context) from the DTS reserved memory region after a crash.
+ * 
+ * Returns:
+ *   0 on success
+ *   -ENOMEM on memory allocation failure  
+ *   -EFAULT on memory mapping failure
+ *   -ENODATA if no crash kernel data is found
+ */
+SYSCALL_DEFINE0(rros_restore_thread)
+{
+	void *src_vaddr;
+	void *dst_vaddr;
+	size_t stack_size = 16384;
+	size_t context_size = sizeof(struct cpu_context);
+	size_t is_crash_kernel_offset = sizeof(void*) + stack_size + context_size;
+	size_t total_size = sizeof(void*) + stack_size + context_size + sizeof(bool);
+	bool crash_kernel_flag = false;
+	
+	/* Check if caller has appropriate privileges */
+	if (!capable(CAP_SYS_ADMIN)) {
+		pr_err("rros_restore_thread: Permission denied\n");
+		return -EPERM;
+	}
+	
+	/* Allocate memory for migration_threads and is_crash_kernel flag */
+	migration_threads = kmalloc(sizeof(struct task_struct), GFP_KERNEL);
+	if (!migration_threads) {
+		pr_err("rros_restore_thread: Failed to allocate migration_threads\n");
+		return -ENOMEM;
+	}
+
+	/* Allocate stack for migration_threads */
+	((struct task_struct*)migration_threads)->stack = kmalloc(stack_size, GFP_KERNEL);
+	
+	/* Map DTS reserved memory */
+	src_vaddr = memremap(RESERVED_PHYS_MEM_ADDR, total_size, MEMREMAP_WB);
+	if (!src_vaddr) {
+		pr_err("rros_restore_thread: Failed to map DTS reserved memory at 0x%llx (size: %zu)\n", 
+			RESERVED_PHYS_MEM_ADDR, total_size);
+		kfree(migration_threads);
+		migration_threads = NULL;
+		return -EFAULT;
+	}
+
+	/*
+	 * Restore content from DTS reserved memory (0x50000000-0x51000000)
+	 * Memory layout:
+	 * +0x00000000: migration_threads pointer  (8 bytes)
+	 * +0x00000008: thread stack              (16384 bytes)
+	 * +0x00004008: cpu_context               (sizeof(struct cpu_context) bytes)
+	 * +0x0000406C: is_crash_kernel flag      (1 byte)
+	 */
+	
+	/* Read crash kernel flag first */
+	memcpy(&crash_kernel_flag, src_vaddr + is_crash_kernel_offset, sizeof(bool));
+	pr_info("rros_restore_thread: crash_kernel_flag is %d\n", crash_kernel_flag);
+	
+	if (!crash_kernel_flag) {
+		pr_info("rros_restore_thread: No crash kernel data found in reserved memory\n");
+		memunmap(src_vaddr);
+		kfree(migration_threads);
+		migration_threads = NULL;
+		return -ENODATA;
+	}
+	
+	/* Set global flag */
+	is_crash_kernel = true;
+	
+	/* Restore migration_threads pointer */
+	// FIXME: Do this later, currently migration_threads pointer is invalid.
+	// memcpy(&migration_threads, src_vaddr, sizeof(void*));
+	// pr_info("rros_restore_thread: migration_threads pointer: 0x%16llx\n", (u64)migration_threads);
+	
+	/* Validate the pointer */
+	if (!migration_threads) {
+		pr_err("rros_restore_thread: Invalid migration_threads pointer\n");
+		memunmap(src_vaddr);
+		return -EINVAL;
+	}
+	
+	/* Restore thread stack */
+	dst_vaddr = (void*)((struct task_struct*)migration_threads)->stack;
+	if (!dst_vaddr) {
+		pr_err("rros_restore_thread: Invalid stack pointer\n");
+		memunmap(src_vaddr);
+		return -EINVAL;
+	}
+	
+	memcpy(dst_vaddr, src_vaddr + sizeof(void*), stack_size);
+	pr_info("rros_restore_thread: Thread stack restored, first word: 0x%lx\n", 
+		*(unsigned long*)((struct task_struct*)migration_threads)->stack);
+
+	/* Restore CPU context */
+	dst_vaddr = (void*)&((struct task_struct*)migration_threads)->thread.cpu_context;
+	memcpy(dst_vaddr, src_vaddr + sizeof(void*) + stack_size, context_size);
+	pr_info("rros_restore_thread: CPU context restored, sp: 0x%lx\n", 
+		(unsigned long)((struct task_struct*)migration_threads)->thread.cpu_context.sp);
+	
+	/* Cleanup */
+	memunmap(src_vaddr);
+	
+	pr_info("rros_restore_thread: Thread restoration completed successfully\n");
+	return 0;
 }
 
 static void machine_kexec_mask_interrupts(void)

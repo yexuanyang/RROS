@@ -9,4 +9,8 @@ qemu-system-aarch64 \
     -drive file="/data/bupt-rtos/newdisk.qcow2",format=qcow2,index=0,media=disk \
     -netdev user,id=net0,hostfwd=tcp::2222-:22 \
     -device virtio-net-pci,netdev=net0 \
-    -nographic -s -S
+    -dtb /data/bupt-rtos/RROS/modified-reserved.dtb \
+    -nographic -s
+
+    # -dtb /data/bupt-rtos/RROS/modified-reserved.dtb \
+    # -dtb /data/bupt-rtos/RROS/modified.dtb \

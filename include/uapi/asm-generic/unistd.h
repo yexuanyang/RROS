@@ -872,8 +872,12 @@ __SYSCALL(__NR_landlock_add_rule, sys_landlock_add_rule)
 #define __NR_landlock_restrict_self 446
 __SYSCALL(__NR_landlock_restrict_self, sys_landlock_restrict_self)
 
+/* RROS specific system calls */
+#define __NR_rros_restore_thread 447
+__SYSCALL(__NR_rros_restore_thread, sys_rros_restore_thread)
+
 #undef __NR_syscalls
-#define __NR_syscalls 447
+#define __NR_syscalls 448
 
 /*
  * 32 bit systems traditionally used different

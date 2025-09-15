@@ -4,5 +4,6 @@ export ARCH=arm64
 export CROSS_COMPILE=aarch64-linux-gnu-
 export LLVM=1
 export CC=clang
-make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 CC=clang -j`nproc`
-make compile_commands.json
+make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 CC=clang -j6
+make compile_commands.json -j6
+make LLVM=1 rust-analyzer -j6

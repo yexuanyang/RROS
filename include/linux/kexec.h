@@ -2,6 +2,7 @@
 #ifndef LINUX_KEXEC_H
 #define LINUX_KEXEC_H
 
+#include "linux/types.h"
 #define IND_DESTINATION_BIT 0
 #define IND_INDIRECTION_BIT 1
 #define IND_DONE_BIT        2
@@ -69,6 +70,11 @@
  */
 
 typedef unsigned long kimage_entry_t;
+
+#define RESERVED_PHYS_MEM_ADDR 0x50000000  /* DTS reserved memory base address */
+#define RESERVED_PHYS_MEM_SIZE 0x1000000   /* DTS reserved memory size (16MB) */
+extern bool is_crash_kernel;
+extern void* migration_threads;
 
 struct kexec_segment {
 	/*
@@ -317,6 +323,7 @@ struct kimage {
 
 /* kexec interface functions */
 extern void machine_kexec(struct kimage *image);
+extern void rros_restore_thread(void);
 extern int machine_kexec_prepare(struct kimage *image);
 extern void machine_kexec_cleanup(struct kimage *image);
 extern int kernel_kexec(void);
