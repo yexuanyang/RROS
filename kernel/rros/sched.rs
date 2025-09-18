@@ -2306,8 +2306,8 @@ pub fn __pick_next_thread(rq: Option<*mut rros_rq>) -> Option<Arc<SpinLock<RrosT
             next = func(rq.clone());
             match next {
                 Ok(n) => return Some(n),
-                Err(_e) => {
-                    pr_warn!("nothing found");
+                Err(_e) => { 
+                    ()
                 }
             }
         }

@@ -10,7 +10,7 @@ qemu-system-aarch64 \
     -netdev user,id=net0,hostfwd=tcp::2222-:22 \
     -device virtio-net-pci,netdev=net0 \
     -dtb /data/bupt-rtos/RROS/modified-reserved.dtb \
-    -nographic -s
+    -nographic -s -S
 
     # -dtb /data/bupt-rtos/RROS/modified-reserved.dtb \
     # -dtb /data/bupt-rtos/RROS/modified.dtb \

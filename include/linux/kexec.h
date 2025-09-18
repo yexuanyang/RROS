@@ -73,8 +73,11 @@ typedef unsigned long kimage_entry_t;
 
 #define RESERVED_PHYS_MEM_ADDR 0x50000000  /* DTS reserved memory base address */
 #define RESERVED_PHYS_MEM_SIZE 0x1000000   /* DTS reserved memory size (16MB) */
-extern bool is_crash_kernel;
+
 extern void* migration_threads;
+extern int8_t var_num;
+extern unsigned long offset[32];
+extern unsigned long size[32];
 
 struct kexec_segment {
 	/*
@@ -323,7 +326,10 @@ struct kimage {
 
 /* kexec interface functions */
 extern void machine_kexec(struct kimage *image);
-extern void rros_restore_thread(void);
+extern long rros_restore_thread(struct task_struct* dst_task);
+extern void preserve_context(void);
+extern bool is_crash_kernel(void);
+extern long set_crash_kernel(bool flag);
 extern int machine_kexec_prepare(struct kimage *image);
 extern void machine_kexec_cleanup(struct kimage *image);
 extern int kernel_kexec(void);

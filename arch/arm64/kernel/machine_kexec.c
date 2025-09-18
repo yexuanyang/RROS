@@ -37,8 +37,14 @@
 /* Global variables for the arm64_relocate_new_kernel routine. */
 extern const unsigned char arm64_relocate_new_kernel[];
 extern const unsigned long arm64_relocate_new_kernel_size;
-bool is_crash_kernel;
 void* migration_threads;
+
+/* the number of variables waiting for recovery in kernel stack */
+int8_t var_num;
+/* the offset of variables waiting for recovery in kernel stack */
+unsigned long offset[32];
+/* the size of variables waiting for recovery in kernel stack */
+unsigned long size[32];
 
 /**
  * kexec_image_info - For debugging output.
@@ -212,57 +218,213 @@ void machine_kexec(struct kimage *kimage)
 }
 
 /**
- * sys_rros_restore_thread - Restore thread state from DTS reserved memory
+ * read_reserved_memory_segment - Read and display DTS reserved memory content
  * 
- * This system call restores critical thread data (migration_threads pointer,
- * stack, and CPU context) from the DTS reserved memory region after a crash.
+ * This function reads the DTS reserved memory segment and outputs the content
+ * of each section for debugging and analysis purposes.
  * 
  * Returns:
  *   0 on success
- *   -ENOMEM on memory allocation failure  
  *   -EFAULT on memory mapping failure
- *   -ENODATA if no crash kernel data is found
+ */
+static long read_reserved_memory_segment(void)
+{
+	void *src_vaddr;
+	size_t stack_size = 16384;
+	size_t context_size = sizeof(struct cpu_context);
+	size_t is_crash_kernel_offset = sizeof(void*) + stack_size + context_size;
+	size_t total_size = sizeof(void*) + stack_size + context_size + sizeof(bool);
+	
+	void *preserved_threads_ptr;
+	bool crash_kernel_flag;
+	unsigned char *stack_data;
+	struct cpu_context *cpu_ctx;
+	int i;
+
+	pr_info("=== Reading DTS Reserved Memory Segment ===\n");
+	pr_info("Reserved memory address: 0x%llx\n", (unsigned long long)RESERVED_PHYS_MEM_ADDR);
+	pr_info("Total size: %zu bytes\n", total_size);
+
+	/* Map DTS reserved memory */
+	src_vaddr = memremap(RESERVED_PHYS_MEM_ADDR, total_size, MEMREMAP_WB);
+	if (!src_vaddr) {
+		pr_err("read_reserved_memory_segment: Failed to map DTS reserved memory at 0x%llx (size: %zu)\n", 
+			RESERVED_PHYS_MEM_ADDR, total_size);
+		return -EFAULT;
+	}
+
+	pr_info("Successfully mapped reserved memory at virtual address: 0x%p\n", src_vaddr);
+
+	/* Read and display memory layout */
+	pr_info("\n=== Memory Layout Analysis ===\n");
+	pr_info("Section 1: Migration threads pointer (offset 0x00000000, size %zu bytes)\n", sizeof(void*));
+	memcpy(&preserved_threads_ptr, src_vaddr, sizeof(void*));
+	pr_info("  Migration threads pointer: 0x%px\n", (void*)preserved_threads_ptr);
+
+	pr_info("\nSection 2: Thread stack (offset 0x00000008, size %zu bytes)\n", stack_size);
+	stack_data = (unsigned char*)(src_vaddr + sizeof(void*));
+	pr_info("  Stack data preview (first 64 bytes):\n");
+	for (i = 0; i < 64 && i < stack_size; i += 16) {
+		pr_info("    %04x: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
+			i,
+			stack_data[i], stack_data[i+1], stack_data[i+2], stack_data[i+3],
+			stack_data[i+4], stack_data[i+5], stack_data[i+6], stack_data[i+7],
+			stack_data[i+8], stack_data[i+9], stack_data[i+10], stack_data[i+11],
+			stack_data[i+12], stack_data[i+13], stack_data[i+14], stack_data[i+15]);
+	}
+
+	pr_info("\nSection 3: CPU context (offset 0x%08zx, size %zu bytes)\n", 
+		sizeof(void*) + stack_size, context_size);
+	cpu_ctx = (struct cpu_context*)(src_vaddr + sizeof(void*) + stack_size);
+	pr_info("  CPU context data:\n");
+	pr_info("    Stack pointer (sp): 0x%016lx\n", cpu_ctx->sp);
+	pr_info("    Program counter (pc): 0x%016lx\n", cpu_ctx->pc);
+	pr_info("    Frame pointer (fp): 0x%016lx\n", cpu_ctx->fp);
+	/* Display callee-saved registers */
+	pr_info("    Register x19: 0x%016lx\n", cpu_ctx->x19);
+	pr_info("    Register x20: 0x%016lx\n", cpu_ctx->x20);
+	pr_info("    Register x21: 0x%016lx\n", cpu_ctx->x21);
+	pr_info("    Register x22: 0x%016lx\n", cpu_ctx->x22);
+	pr_info("    Register x23: 0x%016lx\n", cpu_ctx->x23);
+	pr_info("    Register x24: 0x%016lx\n", cpu_ctx->x24);
+	pr_info("    Register x25: 0x%016lx\n", cpu_ctx->x25);
+	pr_info("    Register x26: 0x%016lx\n", cpu_ctx->x26);
+	pr_info("    Register x27: 0x%016lx\n", cpu_ctx->x27);
+	pr_info("    Register x28: 0x%016lx\n", cpu_ctx->x28);
+
+	pr_info("\nSection 4: Crash kernel flag (offset 0x%08zx, size %zu bytes)\n", 
+		is_crash_kernel_offset, sizeof(bool));
+	memcpy(&crash_kernel_flag, src_vaddr + is_crash_kernel_offset, sizeof(bool));
+	pr_info("  Crash kernel flag: %s\n", crash_kernel_flag ? "true" : "false");
+
+	/* Display variable recovery information if available */
+	pr_info("\n=== Variable Recovery Information ===\n");
+	pr_info("Variable count to recover: %d\n", var_num);
+	for (i = 0; i < var_num && i < 32; i++) {
+		pr_info("  Variable %d: offset=0x%lx, size=%lu bytes\n", i, offset[i], size[i]);
+		if (offset[i] < stack_size) {
+			unsigned char *var_data = stack_data + offset[i];
+			int j;
+			pr_info("    Data preview: ");
+			for (j = 0; j < size[i] && j < 16; j++) {
+				pr_cont("%02x ", var_data[j]);
+			}
+			if (size[i] > 16) pr_cont("...");
+			pr_cont("\n");
+		}
+	}
+
+	/* Cleanup */
+	memunmap(src_vaddr);
+	
+	pr_info("=== Reserved Memory Segment Reading Completed ===\n");
+	return 0;
+}
+
+/**
+ * sys_rros_restore_thread - Display the preserve thread state in DTS reserved memory
+ * 
+ * Returns:
+ *   0 on success
+ *   -EFAULT on memory mapping failure
  */
 SYSCALL_DEFINE0(rros_restore_thread)
 {
-	void *src_vaddr;
+	long ret;
+	
+	pr_info("sys_rros_restore_thread called\n");
+	
+	/* read and display the reserved memory content */
+	ret = read_reserved_memory_segment();
+	if (ret != 0) {
+		pr_err("sys_rros_restore_thread: Failed to read reserved memory segment (ret=%ld)\n", ret);
+		return ret;
+	}
+	
+	pr_info("sys_rros_restore_thread: Reserved memory content displayed successfully\n");
+	return 0;
+}
+
+/* Set the crash_kernel flag in reserved memory */
+long set_crash_kernel(bool flag) {
 	void *dst_vaddr;
 	size_t stack_size = 16384;
 	size_t context_size = sizeof(struct cpu_context);
 	size_t is_crash_kernel_offset = sizeof(void*) + stack_size + context_size;
 	size_t total_size = sizeof(void*) + stack_size + context_size + sizeof(bool);
+
+	/* Map DTS reserved memory */
+	dst_vaddr = memremap(RESERVED_PHYS_MEM_ADDR, total_size, MEMREMAP_WB);
+	if (!dst_vaddr) {
+		pr_err("rros_restore_thread: Failed to map DTS reserved memory at 0x%llx (size: %zu)\n", 
+			RESERVED_PHYS_MEM_ADDR, total_size);
+		return -EFAULT;
+	}
+
+	/* Set crash kernel flag*/
+	memcpy(dst_vaddr + is_crash_kernel_offset, &flag, sizeof(bool));
+	pr_info("set crash_kernel_flag to %d\n", flag);
+	
+	memunmap(dst_vaddr);
+	return 0;
+}
+
+/* Check the crash_kernel flag in reserved memory */
+bool is_crash_kernel(void) {
+	void *src_vaddr;
+	size_t stack_size = 16384;
+	size_t context_size = sizeof(struct cpu_context);
+	size_t is_crash_kernel_offset = sizeof(void*) + stack_size + context_size;
+	size_t total_size = sizeof(void*) + stack_size + context_size + sizeof(bool);
 	bool crash_kernel_flag = false;
+
+	/* Map DTS reserved memory */
+	src_vaddr = memremap(RESERVED_PHYS_MEM_ADDR, total_size, MEMREMAP_WB);
+	if (!src_vaddr) {
+		pr_err("is_crash_kernel: Failed to map DTS reserved memory at 0x%llx (size: %zu)\n", 
+			RESERVED_PHYS_MEM_ADDR, total_size);
+		return 0;
+	}
+
+	/* Read crash kernel flag */
+	memcpy(&crash_kernel_flag, src_vaddr + is_crash_kernel_offset, sizeof(bool));
+	
+	memunmap(src_vaddr);
+	return crash_kernel_flag;
+}
+
+/*
+ * Restore the preserved context from memory to task_struct
+ */
+long rros_restore_thread(struct task_struct* dst_task) {
+	void *src_vaddr;
+	void *dst_vaddr;
+
+	size_t stack_size = 16384;
+	size_t context_size = sizeof(struct cpu_context);
+	size_t is_crash_kernel_offset = sizeof(void*) + stack_size + context_size;
+	size_t total_size = sizeof(void*) + stack_size + context_size + sizeof(bool);
+	bool crash_kernel_flag = false;
+	int var_index = 0;
 	
 	/* Check if caller has appropriate privileges */
 	if (!capable(CAP_SYS_ADMIN)) {
 		pr_err("rros_restore_thread: Permission denied\n");
 		return -EPERM;
 	}
-	
-	/* Allocate memory for migration_threads and is_crash_kernel flag */
-	migration_threads = kmalloc(sizeof(struct task_struct), GFP_KERNEL);
-	if (!migration_threads) {
-		pr_err("rros_restore_thread: Failed to allocate migration_threads\n");
-		return -ENOMEM;
-	}
 
-	/* Allocate stack for migration_threads */
-	((struct task_struct*)migration_threads)->stack = kmalloc(stack_size, GFP_KERNEL);
-	
 	/* Map DTS reserved memory */
 	src_vaddr = memremap(RESERVED_PHYS_MEM_ADDR, total_size, MEMREMAP_WB);
 	if (!src_vaddr) {
 		pr_err("rros_restore_thread: Failed to map DTS reserved memory at 0x%llx (size: %zu)\n", 
 			RESERVED_PHYS_MEM_ADDR, total_size);
-		kfree(migration_threads);
-		migration_threads = NULL;
 		return -EFAULT;
 	}
 
 	/*
 	 * Restore content from DTS reserved memory (0x50000000-0x51000000)
 	 * Memory layout:
-	 * +0x00000000: migration_threads pointer  (8 bytes)
+	 * +0x00000000: preserve_threads pointer  (8 bytes)
 	 * +0x00000008: thread stack              (16384 bytes)
 	 * +0x00004008: cpu_context               (sizeof(struct cpu_context) bytes)
 	 * +0x0000406C: is_crash_kernel flag      (1 byte)
@@ -275,43 +437,33 @@ SYSCALL_DEFINE0(rros_restore_thread)
 	if (!crash_kernel_flag) {
 		pr_info("rros_restore_thread: No crash kernel data found in reserved memory\n");
 		memunmap(src_vaddr);
-		kfree(migration_threads);
-		migration_threads = NULL;
 		return -ENODATA;
 	}
 	
-	/* Set global flag */
-	is_crash_kernel = true;
-	
-	/* Restore migration_threads pointer */
-	// FIXME: Do this later, currently migration_threads pointer is invalid.
-	// memcpy(&migration_threads, src_vaddr, sizeof(void*));
-	// pr_info("rros_restore_thread: migration_threads pointer: 0x%16llx\n", (u64)migration_threads);
-	
-	/* Validate the pointer */
-	if (!migration_threads) {
-		pr_err("rros_restore_thread: Invalid migration_threads pointer\n");
-		memunmap(src_vaddr);
-		return -EINVAL;
-	}
-	
 	/* Restore thread stack */
-	dst_vaddr = (void*)((struct task_struct*)migration_threads)->stack;
+	dst_vaddr = (void*)((struct task_struct*)dst_task)->stack;
 	if (!dst_vaddr) {
 		pr_err("rros_restore_thread: Invalid stack pointer\n");
 		memunmap(src_vaddr);
 		return -EINVAL;
 	}
 	
-	memcpy(dst_vaddr, src_vaddr + sizeof(void*), stack_size);
-	pr_info("rros_restore_thread: Thread stack restored, first word: 0x%lx\n", 
-		*(unsigned long*)((struct task_struct*)migration_threads)->stack);
+	/* Restore the sum and i */
+	for (var_index = 0; var_index < var_num; var_index ++) {
+		memcpy(dst_vaddr + offset[var_index], src_vaddr + sizeof(void*) + offset[var_index], size[var_index]);
+		pr_info("rros_restore_thread: Thread stack restored, dst: 0x%lx, src: 0x%lx, size: 0x%lx\n", 
+			dst_vaddr + offset[var_index], src_vaddr + sizeof(void*) + offset[var_index], size[var_index]);
+	}
 
 	/* Restore CPU context */
-	dst_vaddr = (void*)&((struct task_struct*)migration_threads)->thread.cpu_context;
-	memcpy(dst_vaddr, src_vaddr + sizeof(void*) + stack_size, context_size);
-	pr_info("rros_restore_thread: CPU context restored, sp: 0x%lx\n", 
-		(unsigned long)((struct task_struct*)migration_threads)->thread.cpu_context.sp);
+	/* 
+	 * We should not do that, because the cpu context may used by other context switch, 
+	 * change it will make kernel panic
+	 */
+	// dst_vaddr = (void*)&((struct task_struct*)dst_task)->thread.cpu_context;
+	// memcpy(dst_vaddr, src_vaddr + sizeof(void*) + stack_size, context_size);
+	// pr_info("rros_restore_thread: CPU context restored, sp: 0x%lx\n", 
+	// 	(unsigned long)((struct task_struct*)dst_task)->thread.cpu_context.sp);
 	
 	/* Cleanup */
 	memunmap(src_vaddr);

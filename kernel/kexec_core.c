@@ -5,6 +5,7 @@
  */
 
 #include "asm/current.h"
+#include "linux/stddef.h"
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/capability.h>
@@ -938,18 +939,89 @@ struct kimage *kexec_crash_image;
 int kexec_load_disabled;
 
 /*
- * No panic_cpu check version of crash_kexec().  This function is called
- * only when panic_cpu holds the current CPU number; this is the only CPU
- * which processes crash_kexec routines.
+ * Preserve the stack and cpu context of current thread to reserved memory
  */
-void __noclone __crash_kexec(struct pt_regs *regs)
-{
+void preserve_context(void) {
 	phys_addr_t dst_phys_addr = RESERVED_PHYS_MEM_ADDR;  /* DTS reserved memory: 0x50000000 */
     size_t stack_size = 16384;
     size_t context_size = sizeof(struct cpu_context);
     size_t total_size = sizeof(void*) + stack_size + context_size + sizeof(bool);
     void *src_vaddr;
     void *dst_vaddr;
+	struct task_struct* preserve_thread;
+
+	/* Check if total size exceeds DTS reserved memory size */
+	if (total_size > RESERVED_PHYS_MEM_SIZE) {
+		pr_err("Required size (%zu bytes) exceeds DTS reserved memory size (%u bytes)\n",
+			total_size, RESERVED_PHYS_MEM_SIZE);
+		BUG();
+	}
+	
+	/* Map DTS reserved memory region */
+	dst_vaddr = memremap(dst_phys_addr, total_size, MEMREMAP_WB);
+	if (!dst_vaddr) {
+		pr_err("Failed to map DTS reserved memory at 0x%llx (size: %zu)\n", 
+			dst_phys_addr, total_size);
+		BUG();
+	}
+	pr_info("Successfully mapped DTS reserved memory: vaddr=0x%016llx, paddr=0x%llx, size=%zu\n", 
+		(u64)dst_vaddr, dst_phys_addr, total_size);
+
+	/* 
+		* Preserve critical data to DTS reserved memory
+		* Memory layout in reserved region:
+		* +0x00000000: preserve_thread pointer  (8 bytes)
+		* +0x00000008: thread stack              (16384 bytes)
+		* +0x00004008: cpu_context               (sizeof(struct cpu_context) bytes)
+		* +0x0000406C: is_crash_kernel flag      (1 byte) Set when crash kernel start
+		*/
+	pr_info("Saving critical data to DTS reserved memory...\n");
+	
+	preserve_thread = get_current();
+	pr_info("preserve_thread pointer is %px\n", (void*)preserve_thread);
+	/* Save preserve_thread pointer */
+	pr_info("Copying preserve_thread (%zu bytes) from 0x%016llx to 0x%016llx\n",
+		sizeof(void*), (u64)&preserve_thread, (u64)dst_vaddr);
+	memcpy(dst_vaddr, &preserve_thread, sizeof(void*));
+	wmb();
+
+	/* Verify preserve_thread copy */
+	if (memcmp(dst_vaddr, &preserve_thread, sizeof(void*)) != 0) {
+		pr_err("preserve_thread copy failed! Expected: 0x%016llx, Got: 0x%016llx\n",
+			*(u64*)&preserve_thread, *(u64*)dst_vaddr);
+		memunmap(dst_vaddr);
+		BUG();
+	}
+	pr_info("preserve_thread saved successfully\n");
+
+	/* Save thread stack */
+	src_vaddr = (void*)((struct task_struct*)preserve_thread)->stack;
+	pr_info("Copying thread stack (%zu bytes) from 0x%016llx\n", 
+		stack_size, (u64)src_vaddr);
+	memcpy(dst_vaddr + sizeof(void*), src_vaddr, stack_size);
+	wmb();
+	pr_info("Thread stack saved successfully\n");
+	
+	/* Save CPU context */
+	src_vaddr = (void*)&((struct task_struct*)preserve_thread)->thread.cpu_context;
+	pr_info("Copying CPU context (%zu bytes) from 0x%016llx\n", 
+		context_size, (u64)src_vaddr);
+	memcpy(dst_vaddr + sizeof(void*) + stack_size, src_vaddr, context_size);
+	wmb();
+	pr_info("CPU context saved successfully\n");
+	
+	/* Unmap the reserved memory */
+	memunmap(dst_vaddr);
+	pr_info("Critical data preservation completed, DTS reserved memory unmapped\n");
+}
+
+/*
+ * No panic_cpu check version of crash_kexec().  This function is called
+ * only when panic_cpu holds the current CPU number; this is the only CPU
+ * which processes crash_kexec routines.
+ */
+void __noclone __crash_kexec(struct pt_regs *regs)
+{
 	/* Take the kexec_mutex here to prevent sys_kexec_load
 	 * running on one cpu from replacing the crash kernel
 	 * we are using after a panic on a different cpu.
@@ -968,89 +1040,8 @@ void __noclone __crash_kexec(struct pt_regs *regs)
 			machine_kexec(kexec_crash_image);
 			mutex_unlock(&kexec_mutex);
 		} else {
-			is_crash_kernel = true;
-			
-			/* Check if total size exceeds DTS reserved memory size */
-			if (total_size > RESERVED_PHYS_MEM_SIZE) {
-				pr_err("Required size (%zu bytes) exceeds DTS reserved memory size (%u bytes)\n",
-					total_size, RESERVED_PHYS_MEM_SIZE);
-				BUG();
-			}
-			
-			/* Map DTS reserved memory region */
-			dst_vaddr = memremap(dst_phys_addr, total_size, MEMREMAP_WB);
-			if (!dst_vaddr) {
-				pr_err("Failed to map DTS reserved memory at 0x%llx (size: %zu)\n", 
-					dst_phys_addr, total_size);
-				BUG();
-			}
-			pr_info("Successfully mapped DTS reserved memory: vaddr=0x%016llx, paddr=0x%llx, size=%zu\n", 
-				(u64)dst_vaddr, dst_phys_addr, total_size);
-
-			/* Test memory write access */
-			*(volatile u32*)dst_vaddr = 0xDEADBEEF;
-			wmb();
-			if (*(volatile u32*)dst_vaddr != 0xDEADBEEF) {
-				pr_err("DTS reserved memory is not writable! Read: 0x%08x\n", 
-					*(u32*)dst_vaddr);
-				memunmap(dst_vaddr);
-				BUG();
-			}
-			/* Clear test pattern */
-			*(volatile u32*)dst_vaddr = 0;
-
-			/* 
-			 * Preserve critical data to DTS reserved memory
-			 * Memory layout in reserved region:
-			 * +0x00000000: migration_threads pointer  (8 bytes)
-			 * +0x00000008: thread stack              (16384 bytes)
-			 * +0x00004008: cpu_context               (sizeof(struct cpu_context) bytes)
-			 * +0x0000406C: is_crash_kernel flag      (1 byte)
-			 */
-			pr_info("Saving critical data to DTS reserved memory...\n");
-			
-			migration_threads = get_current();
-			/* Save migration_threads pointer */
-			pr_info("Copying migration_threads (%zu bytes) from 0x%016llx to 0x%016llx\n",
-            	sizeof(void*), (u64)&migration_threads, (u64)dst_vaddr);
-			memcpy(dst_vaddr, &migration_threads, sizeof(void*));
-			wmb();
-
-			/* Verify migration_threads copy */
-			if (memcmp(dst_vaddr, &migration_threads, sizeof(void*)) != 0) {
-				pr_err("migration_threads copy failed! Expected: 0x%016llx, Got: 0x%016llx\n",
-					*(u64*)&migration_threads, *(u64*)dst_vaddr);
-				memunmap(dst_vaddr);
-				BUG();
-			}
-			pr_info("migration_threads saved successfully\n");
-
-			/* Save thread stack */
-			src_vaddr = (void*)((struct task_struct*)migration_threads)->stack;
-			pr_info("Copying thread stack (%zu bytes) from 0x%016llx\n", 
-				stack_size, (u64)src_vaddr);
-			memcpy(dst_vaddr + sizeof(void*), src_vaddr, stack_size);
-			wmb();
-			pr_info("Thread stack saved successfully\n");
-			
-			/* Save CPU context */
-			src_vaddr = (void*)&((struct task_struct*)migration_threads)->thread.cpu_context;
-			pr_info("Copying CPU context (%zu bytes) from 0x%016llx\n", 
-				context_size, (u64)src_vaddr);
-			memcpy(dst_vaddr + sizeof(void*) + stack_size, src_vaddr, context_size);
-			wmb();
-			pr_info("CPU context saved successfully\n");
-			
-			/* Save crash kernel flag */
-			memcpy(dst_vaddr + sizeof(void*) + stack_size + context_size, &is_crash_kernel, sizeof(bool));
-			wmb();
-			pr_info("Crash kernel flag saved successfully\n");
-			
-			/* Unmap the reserved memory */
-			memunmap(dst_vaddr);
-			pr_info("Critical data preservation completed, DTS reserved memory unmapped\n");
-				
 			mutex_unlock(&kexec_mutex);
+			set_crash_kernel(true);
 			kernel_kexec();
 		}
 	}
