@@ -1,0 +1,8 @@
+break read_reserved_memory_segment
+break /data/bupt-rtos/RROS/arch/arm64/kernel/machine_kexec.c:261
+break kfn_1
+break preserve_context
+break machine_kexec.c:355
+break thread_test.rs:91
+break machine_kexec.c:452
+break thread_test.rs:70
